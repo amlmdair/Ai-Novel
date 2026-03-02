@@ -13,7 +13,7 @@ from app.models.project_settings import ProjectSettings
 from app.models.story_memory import StoryMemory
 from app.models.structured_memory import MemoryEntity, MemoryEvent, MemoryForeshadow, MemoryRelation
 from app.schemas.memory_pack import MemoryContextPackOut
-from app.services.fractal_memory_service import get_fractal_context
+from app.services.fractal_memory_service import enrich_fractal_context_for_query, get_fractal_context
 from app.services.graph_context_service import query_graph_context
 from app.services.prompt_budget import estimate_tokens
 from app.services.table_context_service import build_tables_context_text_md
@@ -732,6 +732,13 @@ def retrieve_memory_context_pack(
 
     fractal = get_fractal_context(db=db, project_id=project_id, enabled=fractal_enabled)
     if isinstance(fractal, dict):
+        if str(query_text or "").strip():
+            fractal = enrich_fractal_context_for_query(
+                fractal_context=fractal,
+                query_text=query_text,
+                max_hits=max(1, int(getattr(settings, "fractal_long_retrieval_hits", 3) or 3)),
+                char_limit_override=int(fractal_budget),
+            )
         pb = fractal.get("prompt_block") if isinstance(fractal.get("prompt_block"), dict) else {}
         text_md = str(pb.get("text_md") or "")
         if "fractal" in budgets and text_md:
@@ -831,6 +838,9 @@ def retrieve_memory_context_pack(
             "note": "vector_rag_service.query_project",
             "timings_ms": vector_rag.get("timings_ms"),
             "counts": vector_rag.get("counts"),
+            "budget_observability": vector_rag.get("budget_observability")
+            if isinstance(vector_rag.get("budget_observability"), dict)
+            else None,
             "rerank": vector_rag.get("rerank"),
             "dropped_total": int(vector_rag.get("counts", {}).get("dropped_total", 0))
             if isinstance(vector_rag.get("counts"), dict)
@@ -849,6 +859,9 @@ def retrieve_memory_context_pack(
             "enabled": bool(graph.get("enabled")),
             "disabled_reason": graph.get("disabled_reason"),
             "note": "graph_context_service.query_graph_context",
+            "budget_observability": graph.get("budget_observability")
+            if isinstance(graph.get("budget_observability"), dict)
+            else None,
             "token_estimate": estimate_tokens(str(graph.get("text_md") or "")),
             "truncated": bool(graph.get("truncated")) if "truncated" in graph else None,
             "budget_char_limit": int(graph_budget),
@@ -859,6 +872,13 @@ def retrieve_memory_context_pack(
             "enabled": bool(fractal.get("enabled")),
             "disabled_reason": fractal.get("disabled_reason"),
             "note": "Phase 6.2: use /api/projects/{project_id}/fractal/rebuild to rebuild deterministically",
+            "budget_observability": fractal.get("budget_observability")
+            if isinstance(fractal.get("budget_observability"), dict)
+            else None,
+            "retrieval": fractal.get("retrieval") if isinstance(fractal.get("retrieval"), dict) else None,
+            "retrieval_hit_count": int((fractal.get("retrieval") or {}).get("hit_count") or 0)
+            if isinstance(fractal.get("retrieval"), dict)
+            else 0,
             "token_estimate": estimate_tokens(str(fractal.get("text_md") or "")),
             "truncated": bool(fractal.get("truncated")) if "truncated" in fractal else None,
             "budget_char_limit": int(fractal_budget),
